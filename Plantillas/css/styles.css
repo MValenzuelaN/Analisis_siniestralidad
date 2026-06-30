@@ -1,0 +1,386 @@
+/* ========================================
+   PyQuarto Theme - Paleta SURA (v2)
+   2026
+   ======================================== */
+
+/* ─────────────────────────────────────────
+   1. VARIABLES (PALETA SURA)
+   ───────────────────────────────────────── */
+:root {
+  /* Paleta Principal SURA Refinada */
+  --primary-dark: #0009BD;    /* Azul solicitado (Fondo Título) */
+  --primary:      #0071CE;    /* Azul Cian (Enlaces/Detalles) */
+  --primary-light:#4d5eff;    
+  --accent:       #dbe000;    /* Amarillo-lima */
+  --accent-light: #f0f560;
+  
+  /* Fondos y Superficies */
+  --surface:      #ffffff;
+  --surface-alt:  #f5f7fa;
+  
+  /* Bordes y Líneas */
+  --border:       #d1dce8;
+  
+  /* Texto */
+  --text-primary:   #003366;  /* Azul oscuro casi negro para lectura (Corregido) */
+  --text-secondary: #4a5f7a;
+  --text-muted:     #7a8fa8;
+
+  /* Estados */
+  --success: #28a745;
+  --warning: #dbe000;
+  --danger:  #dc3545;
+  --info:    #0071CE;
+  
+  /* Tipografía */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'Fira Code', 'JetBrains Mono', Consolas, monospace;
+  
+  --spacing-xs: 0.25rem;
+  --spacing-sm: 0.5rem;
+  --spacing-md: 1rem;
+  --spacing-lg: 1.5rem;
+  --spacing-xl: 2rem;
+  
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --transition: 0.15s ease;
+}
+
+/* ─────────────────────────────────────────
+   2. ESTILOS GLOBALES
+   ───────────────────────────────────────── */
+body {
+  font-family: var(--font-sans);
+  color: var(--text-primary);
+  line-height: 1.7;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  color: var(--primary-dark);
+  margin-top: var(--spacing-xl);
+  margin-bottom: var(--spacing-md);
+}
+
+h2::after {
+  content: '';
+  display: block;
+  width: 40px;
+  height: 3px;
+  background: var(--accent);
+  margin-top: var(--spacing-sm);
+}
+
+a {
+  color: var(--primary);
+  text-decoration: none;
+  transition: color var(--transition);
+}
+
+a:hover {
+  color: var(--primary-light);
+}
+
+/* ─────────────────────────────────────────
+   3. COMPONENTES
+   ───────────────────────────────────────── */
+
+/* --- Title Block con Logo --- */
+.quarto-title-block {
+  background-color: var(--primary-dark);
+  /* Degradado con el azul solicitado */
+  background: linear-gradient(135deg, #0009BD 0%, #0071CE 100%);
+  padding: var(--spacing-xl) var(--spacing-lg);
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+  margin-bottom: var(--spacing-xl);
+  position: relative;
+  overflow: hidden;
+  
+  /* Crear espacio para el logo arriba */
+  padding-top: 80px; 
+}
+
+/* Logo SURA arriba a la izquierda */
+.quarto-title-block::after {
+  content: '';
+  position: absolute;
+  top: 20px;
+  left: 30px;
+  width: 120px;
+  height: 45px;
+  background-image: url('https://www.segurossura.com.br/assets/img/header/logo.svg');
+  background-repeat: no-repeat;
+  background-position: left top;
+  background-size: contain;
+  opacity: 1;
+  filter: brightness(0) invert(1);
+  z-index: 5;
+}
+
+.quarto-title-block .title {
+  color: white !important;
+  font-weight: 700;
+  position: relative;
+  z-index: 2;
+  margin-top: 0; /* Ya usamos padding-top en el bloque */
+}
+
+.quarto-title-block .subtitle {
+  color: rgba(255, 255, 255, 0.95) !important;
+  font-size: 1.2rem;
+  position: relative;
+  z-index: 2;
+  margin-top: 10px;
+}
+
+.quarto-title-block .quarto-title-meta-heading {
+  color: rgba(255, 255, 255, 0.9) !important;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+}
+
+.quarto-title-block .quarto-title-meta-contents,
+.quarto-title-block .quarto-title-meta-contents a,
+.quarto-title-block .quarto-title-meta-contents p {
+  color: white !important;
+  font-size: 1.05rem;
+  font-weight: 500;
+}
+
+/* --- TOC --- */
+#TOC {
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  height: auto !important;
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+#TOC a {
+  color: var(--primary-dark);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  display: block;
+  transition: all var(--transition);
+  border-left: 2px solid transparent;
+}
+
+#TOC a:hover {
+  color: var(--primary);
+  background-color: rgba(0, 113, 206, 0.05);
+}
+
+#TOC a.active {
+  color: var(--primary);
+  font-weight: 600;
+  border-left: 3px solid var(--accent);
+  background-color: rgba(0, 113, 206, 0.08);
+}
+
+/* Force TOC Expansion */
+#TOC .nav-link.active + .nav, 
+#TOC .nav-link + .nav,
+#TOC ul {
+  display: block !important;
+}
+
+.sidebar-title {
+  font-weight: 700;
+  color: var(--primary-dark);
+  margin-bottom: var(--spacing-md);
+  padding-bottom: var(--spacing-sm);
+  border-bottom: 2px solid var(--border);
+}
+
+div.sidebar-item-container {
+  flex-shrink: 0 !important;
+}
+
+/* --- Callouts --- */
+.callout {
+  border-radius: var(--radius-md);
+  border-left-width: 4px;
+  margin: var(--spacing-lg) 0;
+  background: var(--surface-alt);
+}
+.callout-note { border-left-color: var(--info); }
+.callout-tip { border-left-color: var(--success); }
+.callout-important { border-left-color: var(--accent); }
+.callout-warning { border-left-color: var(--danger); }
+
+.callout-title { font-weight: 600; font-size: 0.95rem; }
+
+/* --- Code Blocks --- */
+.sourceCode {
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  max-width: 100% !important;
+}
+
+/* Botón Código fuente - Amarillo lima */
+.code-fold-btn,
+.code-tools-button {
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #001a33; /* Texto casi negro (Azul muy oscuro) para máximo contraste */
+  background-color: var(--accent);
+  border: 2px solid #c5cb00;
+  border-radius: var(--radius-md);
+  padding: var(--spacing-xs) var(--spacing-md);
+  transition: all var(--transition);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.code-fold-btn:hover,
+.code-tools-button:hover {
+  background-color: #f0f560;
+  color: black; /* Completamente negro al hover */
+  cursor: pointer;
+  transform: translateY(-1px);
+}
+
+/* --- Tables --- */
+table {
+  width: 100% !important;
+  border-collapse: collapse;
+  margin: var(--spacing-md) 0;
+}
+
+table thead th {
+  background: var(--primary-dark);
+  color: white;
+  font-weight: 600;
+  font-size: 0.9rem;
+  padding: var(--spacing-sm) var(--spacing-md);
+  text-align: left;
+}
+
+table tbody td {
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+
+table tbody tr:nth-child(even) {
+  background: var(--surface-alt);
+}
+
+table tbody tr:hover {
+  background: rgba(0, 102, 204, 0.05);
+}
+
+/* --- Panel Tabsets --- */
+.panel-tabset .nav-tabs {
+  border-bottom: 1px solid var(--border);
+  gap: var(--spacing-xs);
+  margin-bottom: var(--spacing-md);
+}
+
+.panel-tabset .nav-link {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  transition: all var(--transition);
+}
+
+.panel-tabset .nav-link:hover {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+.panel-tabset .nav-link.active {
+  color: var(--primary);
+  border-bottom-color: var(--accent);
+}
+
+.panel-tabset .tab-content {
+  padding: var(--spacing-md) 0;
+}
+
+/* ─────────────────────────────────────────
+   4. FIGURAS Y LAYOUT
+   ───────────────────────────────────────── */
+.quarto-figure {
+  max-width: 100% !important;
+  margin: var(--spacing-lg) 0;
+}
+
+.plotly-graph-div,
+.js-plotly-plot {
+  width: 100% !important;
+}
+
+figcaption {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  font-style: italic;
+  margin-top: var(--spacing-sm);
+  text-align: center;
+}
+
+#quarto-content,
+.content,
+.column-body {
+  max-width: 100% !important;
+}
+
+.cell-output-display {
+  width: 100% !important;
+}
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 80px;
+}
+
+/* ─────────────────────────────────────────
+   5. RESPONSIVE
+   ───────────────────────────────────────── */
+@media (max-width: 768px) {
+  .quarto-title-block {
+    padding: var(--spacing-lg) var(--spacing-md);
+  }
+  
+  .panel-tabset .nav-link {
+    padding: var(--spacing-xs) var(--spacing-sm);
+    font-size: 0.8rem;
+  }
+  
+  h1 { font-size: 1.5rem; }
+  h2 { font-size: 1.25rem; }
+  h3 { font-size: 1.1rem; }
+}
+
+@media (min-width: 992px) {
+  .page-columns.page-full {
+    display: grid;
+    gap: 1.5em;
+  }
+}
+
+/* ─────────────────────────────────────────
+   6. PRINT
+   ───────────────────────────────────────── */
+@media print {
+  .quarto-title-block {
+    background: var(--primary) !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  
+  .callout {
+    break-inside: avoid;
+  }
+}

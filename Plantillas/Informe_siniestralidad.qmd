@@ -1,0 +1,1029 @@
+---
+title: "Siniestralidad de Marcas-modelo consultadas"
+subtitle: "Revisión de la linea de negocio personal en tablero motor"
+author: "Matías Valenzuela Nuche"
+lang: es
+date: last-modified
+date-format: long
+
+# Kernel
+jupyter: python3
+
+# --- PARAMETRIZACION ---
+# Define aqui las variables que controlan tu informe
+params:
+  #titulo_reporte: "Analisis de Datos"
+  #seed: 42                 # Semilla para reproducibilidad
+  #n_muestras: 100          # Ejemplo de parametro numerico
+  mostrar_codigo: true     # Control de visibilidad
+  color_grafico: "blue"    # Ejemplo de parametro de texto
+
+# Comportamiento global de las celdas
+execute:
+  echo: true
+  warning: false
+  error: false
+  cache: false          # Activa el cache de celdas
+  freeze: auto         # Evita re-renderizar si no hubo cambios globales
+
+
+format:
+  html:
+    theme: flatly
+    page-layout: full
+    toc: true
+    toc-location: left
+    toc-title: "Contenido"
+    toc-depth: 3
+    toc-expand: true
+    number-sections: true
+    number-depth: 3
+    smooth-scroll: true
+    embed-resources: true
+    fig-cap-location: bottom
+    tbl-cap-location: top
+    code-fold: true
+    code-summary: "Ver código"
+    code-tools:
+      source: true      # solo mostrar "Ver fuente"
+      toggle: false     # sin "Hide/Show All Code"
+      caption: "Código fuente" # etiqueta del botón
+    code-line-numbers: true
+    code-link: true
+    highlight-style: atom-one
+    html-math-method: katex
+    link-external-icon: true
+    link-external-newwindow: true
+    css: "css/styles.css"
+
+title-block-banner: true
+editor: source
+---
+
+::: {.callout-note icon="true"}
+## Resumen
+
+Este *informe automatizado* es una herramienta para realizar un análisis exploratorio de datos (AED) de las Marcas-Modelo de interés en el último trimestre, con base en información de la lista de **bloqueados** y **agravados** del análisis anterior, junto con la lista proporcionada por el informe trimestral de la AACH. La finalidad está en detallar y justificar cualquier modificación necesaria para Bloquear o Monitorear la suscripción de estas clases de vehículos.
+:::
+
+# Contexto del informe
+
+Este informe analiza los registros de la base de datos `Motor_personal_final` del último trimestre para actualizar la lista de marcas-modelo **bloqueadas** y **monitoreadas** por SURA a raíz de su alta siniestralidad y cantidad de robos. LA lista de marcas.modelo de interés se obtiene de las 2 tablas siguientes:
+
+A partir de esto, el informe pasa por una serie de procesos automatizados hasta generar el nuevo excel con la lista actualizada.
+
+::: panel-tabset
+## Librerías
+
+Carga de librerias y configuración inicial para del informe.
+
+```{python}
+#| label: imports-config
+#| echo: true
+#| cache: false
+
+from __future__ import annotations
+
+import base64
+from IPython.utils.capture import capture_output
+import math
+import re
+import sys
+from typing import Any, List, Dict, Optional, Sequence, Union, Tuple
+
+import io
+from io import StringIO
+
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.styles.colors import Color
+from openpyxl.utils import get_column_letter
+from datetime import datetime
+from datetime import date
+import zipfile, shutil, os
+from itables import show
+
+import numpy as np
+import polars as pl
+import pandas as pd  # Solo para compatibilidad con Plotly
+from pyspark.sql import SparkSession
+import pyodbc
+from pathlib import Path
+
+# print(pyodbc.drivers()) # Comprobar Drivers
+
+# Configuración de parámetros (equivalente a params en R)
+# Nota: En Python/Quarto, los params del YAML no están disponibles automáticamente
+PARAMS = {
+    #'titulo_reporte': 'Análisis de Datos',
+    #'seed': 42,
+    #'n_muestras': 100,
+    'mostrar_codigo': True,
+    'color_grafico': 'blue'
+}
+
+# Forzar modo offline para Plotly (evita descargas de CDN)
+import plotly.offline as py_offline
+import plotly.io as pio
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from scipy import stats as sp_stats
+
+pio.renderers.default = "notebook" # o "iframe" / "browser" dependiendo de lo que Quarto prefiera, pero para HTML estático:
+# Quarto maneja plotly automágicamente, pero esto ayuda a veces:
+py_offline.init_notebook_mode(connected=False)
+
+# Configuración necesaria para PrettyTibble
+from IPython.display import HTML, display
+
+# Configuración de reproducibilidad
+SEED = PARAMS.get('seed', None)  # devuelve None si no existe 'seed'
+
+if SEED is None:
+    print("[OK] Librerías cargadas. Sin semilla definida.")
+else:
+    import numpy as np
+    np.random.seed(SEED)
+    print(f"[OK] Librerías cargadas. Semilla: {SEED}")
+```
+
+## Conexión SQL Server
+
+Establece conexión con los servidores de `SQL Server` mediante autenticación automática de Windows. El informe puede generarse de todos modos si tiene las tablas de datos necesarias disponibles en la carpeta del proyecto.
+
+```{python}
+#| label: configuración SQL-SERVER
+#| echo: true
+#| cache: false
+
+# import pyodbc
+
+# connection_string() se define en utilidades.qmd (incluido más abajo).
+# Al ser una función, se invoca justo aquí para verificar la conexión.
+
+# Cargar la función antes del include (definición local temporal para el test)
+def _detect_odbc_driver() -> str:
+    """Detecta ODBC Driver 18 o 17 para la prueba de conexión inicial."""
+    for drv in ("ODBC Driver 18 for SQL Server",
+                "ODBC Driver 17 for SQL Server"):
+        if drv in pyodbc.drivers():
+            return drv
+    raise RuntimeError(
+        "No se encontró ODBC Driver 18 ni 17. "
+        f"Drivers disponibles: {pyodbc.drivers()}"
+    )
+
+try:
+    _driver = _detect_odbc_driver()
+    _conn_str = (
+        f"DRIVER={{{_driver}}};"
+        "SERVER=SGF1025;"
+        "DATABASE=Transaccional;"
+        "Trusted_Connection=yes;"
+        "Encrypt=no;"
+    )
+    conn = pyodbc.connect(_conn_str)
+    cursor = conn.cursor()
+    cursor.execute("SELECT 1 AS test_col;")
+
+    row = cursor.fetchone()
+
+    if list(row) == [1]:
+        print(f"[OK] Conexión establecida con éxito (driver: {_driver}).")
+    else:
+        print("[WARN] Conexión establecida, pero la prueba devolvió un valor inesperado.")
+
+    cursor.close()
+    conn.close()
+except Exception as e:
+    print(f"[WARN] No se pudo conectar a SQL Server: {e}")
+    print("       El informe usará los archivos .parquet locales si están disponibles.")
+```
+
+{{< include utilidades.qmd >}}
+
+## Tabla de datos inicial
+
+Vista parcial de la tabla de datos resultante de la consulta `SQL` a la base de datos de `SQL server`. Guarda la tabla de datos en formato `parquet` una vez la obtiene y detecta si esta ya existe dentro del proyecto para no ejecutarse innecesariamente.
+
+```{python}
+#| label: Dataframe
+#| echo: true
+#| cache: false
+
+# import polars as pl
+# from pathlib import Path
+# from datetime import datetime
+# import os
+# from os import path
+
+# --- Resolver rutas ---
+
+# PROJECT_ROOT = Path(os.environ["PROJECT_ROOT"]).resolve()  # Para ejecución desde orquestador
+
+PROJECT_ROOT = Path.cwd().resolve().parents[0]  # Para ejecución desde notebook
+
+DATA_DIR = PROJECT_ROOT / "Entradas" / "Tabla_de_datos"
+
+# Nombre del archivo en formato Parquet
+parquet_path = DATA_DIR / "Tabla_siniestralidad.parquet"
+
+
+Diff_fechas = 28  # días antes de regenerar el parquet
+
+# Calcular dinámicamente los 8 últimos cuatrimestres (correspondientes a trimestres Q1-Q4)
+hoy = datetime.now()
+año = hoy.year
+trimestre_actual = (hoy.month - 1) // 3 + 1
+
+trimestres_lista = []
+for _ in range(8):
+    trimestre_actual -= 1
+    if trimestre_actual == 0:
+        trimestre_actual = 4
+        año -= 1
+    trimestres_lista.append(f"'{año}Q{trimestre_actual}'")
+
+trimestres_lista.reverse()
+str_trimestres = ", ".join(trimestres_lista)
+
+print(f"[INFO] Cuatrimestres detectados para el análisis: {str_trimestres}")
+
+
+if parquet_expirado(parquet_path, Diff_fechas):
+
+    print("[INFO] Generando / actualizando parquet...")
+
+    # Si NO existe el archivo, ejecutamos el query y generamos el Parquet
+    query = f"""
+    SELECT
+        [MARCA_MODELO],
+        [LINEA_NEGOCIO],
+        [NUEVA_RENOV],
+        SUM([ULT_ROBO]) AS Total_Ulti_Robo,
+        SUM([CANT_ULT_ROBO]) AS Cantidad_Ulti_Robo,
+        SUM([ULT_DP]) AS Total_Ulti_DP,
+        SUM([CANT_ULT_DP]) AS Cantidad_Ulti_DP,
+        SUM([ULT_PT]) AS Total_Ulti_PT,
+        SUM([CANT_ULT_PT]) AS Cantidad_Ulti_PT,
+        SUM([ULT_RC]) AS Total_Ulti_RC,
+        SUM([CANT_ULT_RC]) AS Cantidad_Ulti_RC,
+        SUM([ULT_TOTAL]) AS Total_Ulti_TOTAL,
+        SUM([CANT_ULT_TOTAL]) AS Cantidad_Ulti_TOTAL,
+        SUM([EXPOS]) AS Suma_Expuestos,
+        SUM([PRIMA_DEV]) AS Total_Prima_Deveng
+    FROM [Transaccional].[dbo].[Tablero_Motor_final]
+    WHERE [PERIODO] IN ({periodos_sql})
+    GROUP BY
+        [MARCA_MODELO],
+        [LINEA_NEGOCIO],
+        [NUEVA_RENOV];
+    """
+
+    # Asumo que query_to_df ya te devuelve un DataFrame de Polars
+    df = query_to_df(query, engine="polars")
+
+    # Guardar en Parquet
+    df.write_parquet(parquet_path)
+    print(f"Tabla creada desde query de SQL Server para los periodos {str_trimestres}. Guardado como `Tabla_siniestralidad.parquet`.")
+else:
+    # Si SÍ existe el archivo, solo lo cargamos desde Parquet
+    df = pl.read_parquet(parquet_path)
+    print("Cargando DataFrame desde `Tabla_siniestralidad.parquet`.")
+
+# Ordenar el DataFrame
+df = df.sort("Cantidad_Ulti_Robo", descending=True)
+
+# Mostrar tabla bonita
+pretty_table(df)
+```
+
+```{python}
+#| label: Lista-MyM
+#| echo: true
+#| cache: false
+
+# Ruta al archivo Excel
+ruta_archivo = PROJECT_ROOT / "Lista_de_marcas-modelo.xlsx"
+
+# 1. Leer el archivo Excel desde la segunda fila (header=1)
+df_de_excel = pd.read_excel(
+    ruta_archivo,
+    sheet_name=0,
+    header=1
+)
+
+# 2. Convertir a DataFrame de polars
+df_de_excel = pl.from_pandas(df_de_excel)
+
+# 3. Identificar columnas B, C y D por posición
+col_b = df_de_excel.columns[1]  # Segunda columna (Autos)
+col_c = df_de_excel.columns[2]  # Tercera columna (Siniestralidad y Nombres de línea)
+col_d = df_de_excel.columns[3]  # Cuarta columna (FALSO / VERDADERO)
+
+# 4. Guardar columna B en una lista de Python (MYM)
+MYM = df_de_excel.select(pl.col(col_b)).to_series().to_list()
+
+# 5. Obtener siniestralidad_maxima (Fila 0 de la columna C)
+siniestralidad_maxima = df_de_excel.select(pl.col(col_c)).row(0)[0]
+
+# 6. Extraer los valores de la columna D (Filas 3 y 4 de nuestro DataFrame Polars)
+valores_estado = df_de_excel.select(pl.col(col_d)).slice(3, 2).to_series().to_list()
+
+# 7. Convertir de manera segura a booleanos de Python (True o False)
+# Pasamos el valor a texto (str), le quitamos espacios, lo hacemos mayúscula
+# y verificamos si dice "TRUE" o "VERDADERO".
+estado_personal = str(valores_estado[0]).strip().upper() in ["TRUE", "VERDADERO", "1", "V"]
+estado_comercial = str(valores_estado[1]).strip().upper() in ["TRUE", "VERDADERO", "1", "V"]
+
+print(f"Personal está activado: {estado_personal}")
+print(f"Comercial está activado: {estado_comercial}")
+
+# 8. Lógica de filtrado para tu DataFrame df1
+if estado_personal == True and estado_comercial == False:
+    # Caso 1: Solo "Personal" es verdadero
+    print("Aplicando filtro: Solo Personal")
+    df1 = df1.filter(pl.col("LINEA_NEGOCIO") == "Personal")
+
+    elif estado_comercial == True and estado_personal == False:
+        # Caso 2: Solo "Comercial" es verdadero
+        print("Aplicando filtro: Solo Comercial")
+        # Nota: Si en tus datos dice "Commercial" (con doble m), cámbialo en la línea de abajo.
+        df1 = df1.filter(pl.col("LINEA_NEGOCIO") == "Commercial")
+
+    elif estado_personal == True and estado_comercial == True:
+        # Caso 3: Ambos son verdaderos
+        print("Aplicando filtro: Personal y Comercial")
+        # Usamos .is_in([]) para decirle a Polars que acepte cualquiera de esos dos valores
+        df1 = df1.filter(pl.col("LINEA_NEGOCIO").is_in(["Personal", "Commercial"]))
+    else:
+        # Caso 4: Ambos son falsos
+        print("Atención: Ninguna línea de negocio fue seleccionada en el Excel.")
+        # Si quieres que df1 se quede vacío cuando ambos son falsos, puedes usar:
+        # df1 = df1.clear()
+
+```
+:::
+
+# Revisión de homologación
+
+Esta sección muestra una tabla dinámica de marcas-modelo con el fin de validar si se están considerando todas las versiones relevantes para el análisis y excluyendo las equívocas. Las **versiones** son especies del genero **marca-modelo**, por ello, se ingresan con nombres similares que contienen las palabras clave que componen el nombre de la marca-modelo.
+
+**Primera columna**: aparecen los nombres de la marca-modelo de interés.
+
+**Segunda columna:** se muestran los nombres únicos de todas las versiones detectadas utilizando el *patrón general utilizado para detectar las versiones de una marca-modelo*, esta es la lista de versiones considerada correcta y que utiliza internamente el informe automatizado para construir metricas de las marcas-modelo y sus valores, por lo que debe procurarse de que contenga todas y solo las versiones relevantes.
+
+**Tercera columna**: se muestra la lista de los nombres de las versiones "sucia", es decir, una que no considera un patrón automatizado para detectar las versiones, sino que utiliza cualquier nombre único que contenga las palabras clave de la marca-modelo, incluyendo tanto las versiones de la marca-modelo de interés, como otras que tendrían que filtrarse por ser equívocas.
+
+-   **El método de validación es**: comparar los valores de las columnas de la tabla dinámica desplegada para comprobar que todas las versiones corerctas de la marca-modelo de interés que aparecen en la columna "sucia" (la tercera) aparezcan también en la columna que usa el informe (la segunda) y que se excluyan las equívocas.
+
+::: {.callout-caution collapse="true"}
+## El *patrón general utilizado para detectar las versiones de una marca–modelo*
+
+Es, conceptualmente:
+
+```
+{marca_esc}\s*-{bloque_intermedio_1}{p1_esc}{bloque_intermedio_2}{p2_esc}
+```
+
+donde:
+
+-   `marca_esc` es la marca escapada para regex.
+-   `p1_esc` y `p2_esc` son las partes del modelo (`p1` y `p2`) escapadas.
+-   `bloque_intermedio_1` es lo que puede aparecer entre la marca y `p1`.
+-   `bloque_intermedio_2` es lo que puede aparecer entre `p1` y `p2`.
+
+y funciona según las siguientes reglas:
+
+------------------------------------------------------------------------
+
+### **Separación MARCA – MODELO**
+
+Se asume el formato **"MARCA - MODELO"**.\
+La marca y el modelo se separan **solo por el primer guion**.\
+El uso de `\s*` en el patrón permite cualquier cantidad de espacios alrededor del guion.
+
+------------------------------------------------------------------------
+
+### **Partes del modelo: p1 y p2**
+
+El MODELO se divide en:
+
+-   **p1**: primera parte
+-   **p2**: el resto, si existe
+
+Sin espacios ni guiones internos.
+
+#### **Reglas para valores numéricos estrictos**
+
+Si `p1` o `p2` es numérico puro (ejemplo: `"200"`, `"30"`, `"50"`):
+
+-   No puede estar **seguido inmediatamente** por otro dígito.
+-   No puede estar **precedido inmediatamente** por un dígito.
+
+Esto evita coincidencias indeseadas, como p1 = `"3"` dentro de `"30"` o `"13"`.
+
+#### **Excepción con sufijo `%`**
+
+Si `p1` o `p2` termina en `%`:
+
+-   Se **elimina** el `%` para construir el patrón.
+-   Se permite que vengan **más dígitos** después del número.
+
+Ejemplo:\
+`200%` coincide con `200`, `2000`, `20050`, etc.
+
+#### **Excepción con sufijo `&`**
+
+Si `p1` o `p2` termina en `&` **y no es numérico**:
+
+-   Se **elimina** el `&` para construir el patrón.
+-   Se exige que la última letra **no esté seguida inmediatamente por otra letra**.
+
+#### **Prefijo `$` (ancla estricta)**
+
+Si `p1` o `p2` comienza con `$`:
+
+-   La parte debe ser el **primer carácter alfanumérico** después del guion.
+-   No se permiten letras ni números antes de esa parte.
+
+Ejemplo con `$A`:
+
+-   ✔ Se permite: `"MAZDA - A"`, `"MAZDA - AQEF"`, `"MAZDA - A200"`
+-   ✘ No se permite: `"MAZDA - CAP"`, `"MAZDA - 1A"`, `"MAZDA - XA"`
+
+------------------------------------------------------------------------
+
+### **Bloques intermedios entre marca, p1 y p2**
+
+Se usan dos bloques intermedios:
+
+-   `between_marca_p1`: entre la marca y p1
+-   `between_p1_p2`: entre p1 y p2
+
+#### **Reglas**
+
+-   **Si no hay ancla (`$`)**: se permiten **no-dígitos**.
+-   **Si hay ancla**: no se permiten **letras ni números**.
+:::
+
+```{python}
+#| label: Tabla_validación
+#| echo: true
+#| cache: false
+
+# Eliminar filas donde MARCA_MODELO es nulo o "-"
+df1 = df1.filter(
+    pl.col("MARCA_MODELO").is_not_null() &  # no nulo
+    (pl.col("MARCA_MODELO") != "-")        # distinto de "-"
+)
+
+# =========================
+# Reagrupar MARCA_MODELO
+# eliminando NUEVA_RENOV
+# =========================
+
+df = (
+    df1
+    .group_by("MARCA_MODELO")
+    .agg([
+        pl.sum("Total_Ulti_Robo"),
+        pl.sum("Cantidad_Ulti_Robo"),
+        pl.sum("Total_Ulti_DP"),
+        pl.sum("Cantidad_Ulti_DP"),
+        pl.sum("Total_Ulti_PT"),
+        pl.sum("Cantidad_Ulti_PT"),
+        pl.sum("Total_Ulti_RC"),
+        pl.sum("Cantidad_Ulti_RC"),
+        pl.sum("Total_Ulti_TOTAL"),
+        pl.sum("Cantidad_Ulti_TOTAL"),
+        pl.sum("Suma_Expuestos"),
+        pl.sum("Total_Prima_Deveng")
+    ])
+)
+
+
+######################## Homologación
+
+
+# import re
+
+def separar_marca_modelo(texto: str):
+    # 1) Separar marca y modelo SOLO por el primer "-"
+    marca, modelo = [p.strip() for p in texto.split('-', 1)]
+
+    # 2) Dividir el modelo en partes por "-" o espacio " "
+    #    [-\s]+  => uno o más guiones o espacios
+    partes = re.split(r"[-\s]+", modelo)
+    partes = [p for p in partes if p]  # quitar strings vacíos
+
+    if len(partes) == 1:
+        parte1 = partes[0]
+        parte2 = ""
+    elif len(partes) >= 2:
+        parte1 = partes[0]
+        # juntar el resto SIN espacios (como en tu código original)
+        parte2 = "".join(partes[1:])
+    else:
+        raise ValueError(f"No se puede separar: {texto}")
+
+    return marca, parte1, parte2
+#df_consulta
+
+def generar_regex(texto: str) -> str:
+    marca, p1, p2 = separar_marca_modelo(texto)
+
+    marca_esc = re.escape(marca.strip())
+
+    # --- LÓGICA: $ como "ancla" (sin letras/num antes) ---
+    p1_anchor = False
+    p2_anchor = False
+
+    if p1 and p1.startswith("$"):
+        p1_anchor = True
+        p1 = p1[1:]  # quitamos el $
+    if p2 and p2.startswith("$"):
+        p2_anchor = True
+        p2 = p2[1:]  # quitamos el $
+
+    # --- LÓGICA DE EXCEPCIÓN: sufijos % y & ---
+    p1_mod_num = False
+    p1_mod_let = False
+    if p1:
+        if p1.endswith('%') and p1[:-1].isdigit():
+            p1 = p1[:-1]  # Quitamos el %
+            p1_mod_num = True
+        elif p1.endswith('&') and not p1[:-1].isdigit():  # & (no &amp;)
+            p1 = p1[:-1]  # Quitamos el &
+            p1_mod_let = True
+
+    p2_mod_num = False
+    p2_mod_let = False
+    if p2:
+        if p2.endswith('%') and p2[:-1].isdigit():
+            p2 = p2[:-1]
+            p2_mod_num = True
+        elif p2.endswith('&') and not p2[:-1].isdigit():
+            p2 = p2[:-1]
+            p2_mod_let = True
+
+    # Escapamos los textos limpios (sin %, &, $)
+    p1_esc = re.escape(p1) if p1 else ""
+    p2_esc = re.escape(p2) if p2 else ""
+
+    # === EXCEPCIONES sin lookahead (Polars compatible) ===
+    if p1_mod_num:
+        p1_esc += r"\d*"              # permite más dígitos después
+    elif p1_mod_let:
+        p1_esc += r"(?:[^A-Za-z]|$)"  # NO permite letra inmediatamente después
+
+    if p2_mod_num:
+        p2_esc += r"\d*"
+    elif p2_mod_let:
+        p2_esc += r"(?:[^A-Za-z]|$)"
+
+    # Numéricos estrictos (si no están modificados por %)
+    p1_is_strict_num = p1.isdigit() and not p1_mod_num
+    p2_is_strict_num = p2.isdigit() and not p2_mod_num
+
+    # ===== CASO 1: solo hay p1 =====
+    if not p2:
+        if p1_anchor:
+            # Anclado: sin letras ni números antes de p1
+            # Ej: MAZDA - $A  ->  MAZDA\s*-[^A-Za-z0-9]*A.*
+            patron = rf"{marca_esc}\s*-[^A-Za-z0-9]*{p1_esc}.*"
+        elif p1_is_strict_num:
+            # Regla original estricta para números
+            patron = rf"{marca_esc}\s*-[^0-9]*{p1_esc}(?:\D|$)"
+        else:
+            # Patrón más simple (no anclado)
+            patron = rf"{marca_esc}\s*-.*{p1_esc}"
+        return patron
+
+    # ===== CASO 2: hay p1 y p2 =====
+
+    # Si p2 es numérico estricto, le agregamos la restricción de fin/no dígito
+    if p2_is_strict_num:
+        p2_esc = rf"{p2_esc}(?:\D|$)"
+
+    # Bloques intermedios:
+    # - entre marca y p1
+    # - entre p1 y p2
+    # Si está anclado, no se permiten letras ni números en ese tramo
+    between_marca_p1 = r"[^A-Za-z0-9]*" if p1_anchor else r"[^0-9]*"
+    between_p1_p2    = r"[^A-Za-z0-9]*" if p2_anchor else r"[^0-9]*"
+
+    patron = (
+        rf"{marca_esc}.*-"
+        rf"{between_marca_p1}{p1_esc}"
+        rf"{between_p1_p2}{p2_esc}"
+    )
+    return patron
+
+
+def limpiar_simbolos(parte: str) -> str:
+    """
+    Elimina los símbolos $, % y & de la parte recibida.
+    Si parte es None o vacío, devuelve "".
+    """
+    if not parte:
+        return ""
+    # Elimina los caracteres $ % &
+    return re.sub(r'[\$\%&]', '', parte)
+
+
+def generar_regex_sucio(texto: str) -> str:
+    """
+    Genera un patrón regex simple del tipo:
+        marca.*-.*p1.*p2
+
+    - Limpia los símbolos $, % y & de marca, p1 y p2.
+    - Escapa los valores para que no rompan el regex.
+    - Maneja casos donde falten p1 o p2.
+    """
+    marca, p1, p2 = separar_marca_modelo(texto)
+
+    # 1) Limpiamos símbolos especiales primero
+    marca = limpiar_simbolos(marca)
+    p1    = limpiar_simbolos(p1)
+    p2    = limpiar_simbolos(p2)
+
+    # 2) Escapamos por seguridad
+    marca_esc = re.escape(marca) if marca else ""
+    p1_esc    = re.escape(p1)    if p1    else ""
+    p2_esc    = re.escape(p2)    if p2    else ""
+
+    # 3) Armamos el patrón según lo que haya
+    if marca_esc and p1_esc and p2_esc:
+        # marca.*-.*p1.*p2
+        return rf"{marca_esc}.*-.*{p1_esc}.*{p2_esc}"
+    elif marca_esc and p1_esc:
+        # marca.*-.*p1
+        return rf"{marca_esc}.*-.*{p1_esc}"
+    elif marca_esc:
+        # marca.*-.*
+        return rf"{marca_esc}.*-.*"
+    else:
+        # Caso extremo: no se pudo extraer nada útil
+        return r".*"
+
+```
+
+```{python}
+#| label: lista-nombres-mym
+#| echo: true
+#| cache: false
+
+df_mym_lista = pl.DataFrame({"Marca modelo": MYM})
+pretty_table(df_mym_lista, n=100)
+```
+
+```{python}
+#| label: panel-versiones-mym
+#| echo: true
+#| cache: false
+#| results: asis
+
+#import pandas as pd
+#import polars as pl
+#import re
+#from itables import show
+
+filas = []
+
+for variable in MYM:
+    # 1. Patrones regex
+    patron = generar_regex(variable)
+    patron_ci = rf"(?i){patron}"  # CI = case-insensitive
+
+    patron_sucio = generar_regex_sucio(variable)
+    patron_ci_sucio = rf"(?i){patron_sucio}"  # CI = case-insensitive
+
+    # 2. Filtrado de marcas-modelo según patrón sucio (el superconjunto)
+    df_filt_sucio = df.filter(
+        pl.col("MARCA_MODELO").str.contains(patron_ci_sucio)
+    )
+
+    versiones_sucias = df_filt_sucio.select("MARCA_MODELO").unique().to_series().to_list()
+
+    for v_sucia in versiones_sucias:
+        # Verificamos si la versión sucia cumple también con el patrón limpio
+        if re.search(patron_ci, v_sucia):
+            v_limpia = v_sucia
+        else:
+            v_limpia = None
+
+        filas.append({
+            "Marca modelo": variable,
+            "Versión limpia": v_limpia,
+            "Versión sucia": v_sucia
+        })
+
+# Generar DataFrame final
+df_tabset = pd.DataFrame(filas)
+
+# Mostrar la tabla interactiva usando itables
+show(df_tabset, classes="display compact", column_filters="header", order=[[0, "asc"], [2, "asc"]])
+```
+
+# Análisis de siniestralidad Total
+
+```{python}
+#| label: tabla_preliminar
+#| echo: true
+#| cache: false
+df_norm = df.clone()
+
+for variable in MYM:
+    patron = generar_regex(variable)
+    df_norm = df_norm.with_columns(
+        pl.when(
+            pl.col("MARCA_MODELO").str.contains(rf"(?i){patron}")
+        )
+        .then(pl.lit(variable))
+        .otherwise(pl.col("MARCA_MODELO"))
+        .alias("MARCA_MODELO")
+    )
+
+# Re-agrupar sumando las columnas numéricas (mantiene la agrupación original)
+cols_grupo = ["MARCA_MODELO"]
+cols_numericas = [c for c in df_norm.columns if c not in cols_grupo]
+
+df_norm = (
+    df_norm
+    .group_by(cols_grupo)
+    .agg([pl.col(c).sum() for c in cols_numericas])
+    .sort("Cantidad_Ulti_Robo", descending=True)
+)
+
+df_norm = df_norm.filter(
+    pl.col("MARCA_MODELO").is_in(MYM)
+    )
+
+df_norm = df_norm.select(
+    [
+        pl.col("MARCA_MODELO"),        # 1ra columna
+        pl.exclude(["MARCA_MODELO"])
+    ]
+)
+
+df_norm = df_norm.select(
+    [
+        pl.col("MARCA_MODELO"),      # 1ra columna
+        pl.col("Suma_Expuestos"),    # 2da columna
+        pl.exclude(["MARCA_MODELO", "Suma_Expuestos"])
+    ]
+)
+
+pretty_table(
+    df_norm,
+    n=100,
+    title="Tabla de análisis de metricas de marcas-modelo consultadas",
+)
+```
+
+```{python}
+#| label: tabla_final
+#| echo: true
+#| cache: false
+
+####################################### Obtener metricas de siniestralidad
+
+# ── Crear df_robos a partir de df_norm ─────────────────────────────────────
+# Calcula Frecuencia, Severidad y Loss Ratio para cada cobertura.
+#   Freq_{algo}      = Cantidad_Ulti_{algo} / Suma_Expuestos
+#   Severidad_{algo} = Total_Ulti_{algo}    / Cantidad_Ulti_{algo}
+#   LR_{algo}        = Freq_{algo}          / Severidad_{algo}
+
+coberturas = ["Robo", "DP", "PT", "RC", "TOTAL"]
+
+cols_grupo = ["MARCA_MODELO", "Suma_Expuestos"]
+
+exprs = []
+for cob in coberturas:
+    cant  = f"Cantidad_Ulti_{cob}"
+    total = f"Total_Ulti_{cob}"
+    exp   = "Suma_Expuestos"
+    prima = "Total_Prima_Deveng"
+
+    freq  = f"Freq_{cob}"
+    sev   = f"Severidad_{cob}"
+    lr    = f"LR_{cob}"
+
+    # Frecuencia
+    freq_expr = (
+        pl.when(pl.col(exp).is_not_null() & (pl.col(exp) > 0))
+        .then(100 * pl.col(cant).fill_null(0) / pl.col(exp))
+        .otherwise(None) # No hay exposición
+        .alias(freq)
+    )
+
+    # Severidad
+    sev_expr = (
+        pl.when(
+            pl.col(cant).is_not_null()
+            & (pl.col(cant) > 0)
+            & pl.col(total).is_not_null()
+        )
+        .then(pl.col(total) / pl.col(cant))
+        .otherwise(None)  # sin siniestros => severidad indefinida
+        .alias(sev)
+    )
+
+    # Loss Ratio
+    lr_expr = (
+        pl.when(pl.col(prima).is_not_null() & (pl.col(prima) > 0))
+        .then(100 * pl.col(total).fill_null(0) / pl.col(prima))
+        .otherwise(None)
+        .alias(lr)
+    )
+
+    exprs.extend([freq_expr, sev_expr, lr_expr])
+
+df_consulta = (
+    df_norm
+    .select(cols_grupo + exprs)
+    .sort("Freq_Robo", descending=True)
+)
+
+df_consulta_ordenado = (
+    df_consulta
+    .with_columns(pl.col("LR_TOTAL").cast(pl.Float64))
+    .sort("LR_TOTAL", descending=True)
+    .with_columns(
+        pl.when(pl.col("LR_TOTAL") > 75)
+          .then(pl.lit("Sí"))
+          .otherwise(pl.lit("No"))
+          .alias("¿LR_TOTAL > 75?")
+    )
+)
+
+
+paleta_robos = {
+    "Sí": "#FF9494",
+    "No": "#94dfadd3"
+}
+
+LR = ["LR_Robo", "LR_DP", "LR_PT", "LR_RC", "LR_TOTAL", "Suma_Expuestos"]
+
+pretty_table(
+    df_consulta_ordenado,
+    n=100,
+    highlight_col="¿LR_TOTAL > 75?",
+    highlight_palette=paleta_robos,
+    highlight_cols=LR,
+    title="Tabla de análsis de siniestralidad de marcas-modelo consultadas",
+)
+```
+
+# Análisis de siniestralidad, separación de nuevas y renovadas
+
+```{python}
+#| label: tabla_preliminar_desagregada
+#| echo: true
+#| cache: false
+
+df1_norm = df1.clone()
+
+for variable in MYM:
+    patron = generar_regex(variable)
+    df1_norm = df1_norm.with_columns(
+        pl.when(
+            pl.col("MARCA_MODELO").str.contains(rf"(?i){patron}")
+        )
+        .then(pl.lit(variable))
+        .otherwise(pl.col("MARCA_MODELO"))
+        .alias("MARCA_MODELO")
+    )
+
+# Re-agrupar sumando las columnas numéricas (mantiene la agrupación original)
+cols_grupo = ["MARCA_MODELO", "NUEVA_RENOV"]
+cols_numericas = [c for c in df_norm.columns if c not in cols_grupo]
+
+df1_norm = (
+    df1_norm
+    .group_by(cols_grupo)
+    .agg([pl.col(c).sum() for c in cols_numericas])
+    .sort("Cantidad_Ulti_Robo", descending=True)
+)
+
+df1_norm = df1_norm.filter(
+    pl.col("MARCA_MODELO").is_in(MYM)
+    )
+
+df1_norm = df1_norm.select(
+    [
+        pl.col("MARCA_MODELO"),        # 1ra columna
+        pl.exclude(["MARCA_MODELO"])
+    ]
+)
+
+df1_norm = df1_norm.select(
+    [
+        pl.col("MARCA_MODELO"),      # 1ra columna
+        pl.col("Suma_Expuestos"),    # 2da columna
+        pl.exclude(["MARCA_MODELO", "Suma_Expuestos"])
+    ]
+)
+
+pretty_table(
+    df1_norm,
+    n=100,
+    title="Tabla de análisis de metricas de marcas-modelo consultadas",
+)
+```
+
+```{python}
+#| label: tabla_final_desagregada
+#| echo: true
+#| cache: false
+
+####################################### Obtener metricas de siniestralidad
+
+# ── Crear df_robos a partir de df_norm ─────────────────────────────────────
+# Calcula Frecuencia, Severidad y Loss Ratio para cada cobertura.
+#   Freq_{algo}      = Cantidad_Ulti_{algo} / Suma_Expuestos
+#   Severidad_{algo} = Total_Ulti_{algo}    / Cantidad_Ulti_{algo}
+#   LR_{algo}        = Freq_{algo}          / Severidad_{algo}
+
+coberturas = ["Robo", "DP", "PT", "RC", "TOTAL"]
+
+cols_grupo1 = ["MARCA_MODELO", "NUEVA_RENOV", "Suma_Expuestos"]
+
+exprs = []
+for cob in coberturas:
+    cant  = f"Cantidad_Ulti_{cob}"
+    total = f"Total_Ulti_{cob}"
+    exp   = "Suma_Expuestos"
+    prima = "Total_Prima_Deveng"
+
+    freq  = f"Freq_{cob}"
+    sev   = f"Severidad_{cob}"
+    lr    = f"LR_{cob}"
+
+    # Frecuencia
+    freq_expr = (
+        pl.when(pl.col(exp).is_not_null() & (pl.col(exp) > 0))
+        .then(100 * pl.col(cant).fill_null(0) / pl.col(exp))
+        .otherwise(None) # No hay exposición
+        .alias(freq)
+    )
+
+    # Severidad
+    sev_expr = (
+        pl.when(
+            pl.col(cant).is_not_null()
+            & (pl.col(cant) > 0)
+            & pl.col(total).is_not_null()
+        )
+        .then(pl.col(total) / pl.col(cant))
+        .otherwise(None)  # sin siniestros => severidad indefinida
+        .alias(sev)
+    )
+
+    # Loss Ratio
+    lr_expr = (
+        pl.when(pl.col(prima).is_not_null() & (pl.col(prima) > 0))
+        .then(100 * pl.col(total).fill_null(0) / pl.col(prima))
+        .otherwise(None)
+        .alias(lr)
+    )
+
+    exprs.extend([freq_expr, sev_expr, lr_expr])
+
+df1_consulta = (
+    df1_norm
+    .select(cols_grupo1 + exprs)
+    .sort("Freq_Robo", descending=True)
+)
+
+df1_consulta_ordenado = (
+    df1_consulta
+    .with_columns(pl.col("LR_TOTAL").cast(pl.Float64))
+    .sort("LR_TOTAL", descending=True)
+    .with_columns(
+        pl.when(pl.col("LR_TOTAL") > 75)
+          .then(pl.lit("Sí"))
+          .otherwise(pl.lit("No"))
+          .alias("¿LR_TOTAL > 75?")
+    )
+)
+
+
+paleta_robos = {
+    "Sí": "#FF9494",
+    "No": "#94dfadd3"
+}
+
+LR = ["LR_Robo", "LR_DP", "LR_PT", "LR_RC", "LR_TOTAL", "Suma_Expuestos"]
+
+
+pretty_table(
+    df1_consulta_ordenado,
+    n=100,
+    highlight_col="¿LR_TOTAL > 75?",
+    highlight_palette=paleta_robos,
+    highlight_cols=LR,
+    title="Tabla de análsis de siniestralidad de marcas-modelo consultadas (nueva/renovada)",
+)
+```

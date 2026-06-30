@@ -1,0 +1,10 @@
+ipython
+itables
+openpyxl
+numpy
+polars
+pandas
+pyspark
+pyodbc
+plotly
+scipy
